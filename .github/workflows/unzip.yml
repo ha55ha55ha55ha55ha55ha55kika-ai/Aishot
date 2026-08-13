@@ -1,3 +1,4 @@
+
 name: Unzip and commit
 
 on:
@@ -11,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      workflows: write      # ← вот это важное добавление
+      workflows: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
