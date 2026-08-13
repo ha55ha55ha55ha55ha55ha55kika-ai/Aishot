@@ -204,7 +204,7 @@ class OverlayService : Service() {
         }
         val body = json.toString().toRequestBody("application/json".toMediaType())
         return Request.Builder()
-            .url("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$key")
+            .url("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=$key")
             .post(body).build()
     }
 
