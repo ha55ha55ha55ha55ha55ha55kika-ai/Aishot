@@ -36,7 +36,7 @@ class SettingsActivity : Activity() {
         // Провайдер
         layout.addView(label("Активный AI провайдер:"))
         val providerSpinner = Spinner(this)
-        val providers = arrayOf("Gemini", "Claude", "OpenAI")
+        val providers = arrayOf("Gemini", "Claude", "OpenAI", "Grok", "DeepSeek", "Mistral", "OpenRouter")
         providerSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, providers)
         val currentProvider = prefs.getString("provider", "Gemini")
         providerSpinner.setSelection(providers.indexOf(currentProvider).coerceAtLeast(0))
@@ -105,6 +105,50 @@ class SettingsActivity : Activity() {
             hint = "Например: gpt-4o, gpt-5"
         }
         layout.addView(openaiModel)
+
+        layout.addView(label("Grok (xAI) API ключ:"))
+        val grokKey = EditText(this).apply { setText(prefs.getString("grok_key", "")) }
+        layout.addView(grokKey)
+
+        layout.addView(label("Модель Grok:"))
+        val grokModel = EditText(this).apply {
+            setText(prefs.getString("grok_model", "grok-4"))
+            hint = "Например: grok-4, grok-2-vision-1212"
+        }
+        layout.addView(grokModel)
+
+        layout.addView(label("DeepSeek API ключ:"))
+        val deepseekKey = EditText(this).apply { setText(prefs.getString("deepseek_key", "")) }
+        layout.addView(deepseekKey)
+
+        layout.addView(label("Модель DeepSeek (без поддержки скриншотов):"))
+        val deepseekModel = EditText(this).apply {
+            setText(prefs.getString("deepseek_model", "deepseek-chat"))
+            hint = "Например: deepseek-chat, deepseek-reasoner"
+        }
+        layout.addView(deepseekModel)
+
+        layout.addView(label("Mistral API ключ:"))
+        val mistralKey = EditText(this).apply { setText(prefs.getString("mistral_key", "")) }
+        layout.addView(mistralKey)
+
+        layout.addView(label("Модель Mistral:"))
+        val mistralModel = EditText(this).apply {
+            setText(prefs.getString("mistral_model", "pixtral-large-latest"))
+            hint = "Например: pixtral-large-latest"
+        }
+        layout.addView(mistralModel)
+
+        layout.addView(label("OpenRouter API ключ (доступ ко многим моделям одним ключом):"))
+        val openrouterKey = EditText(this).apply { setText(prefs.getString("openrouter_key", "")) }
+        layout.addView(openrouterKey)
+
+        layout.addView(label("Модель OpenRouter:"))
+        val openrouterModel = EditText(this).apply {
+            setText(prefs.getString("openrouter_model", "anthropic/claude-3.5-sonnet"))
+            hint = "Например: anthropic/claude-3.5-sonnet, x-ai/grok-2-vision-1212"
+        }
+        layout.addView(openrouterModel)
 
         // ---- Внешний вид плавающей кнопки ----
 
@@ -235,6 +279,14 @@ class SettingsActivity : Activity() {
                     putString("claude_model", claudeModel.text.toString().trim().ifEmpty { "claude-sonnet-4-5" })
                     putString("openai_key", openaiKey.text.toString().trim())
                     putString("openai_model", openaiModel.text.toString().trim().ifEmpty { "gpt-4o" })
+                    putString("grok_key", grokKey.text.toString().trim())
+                    putString("grok_model", grokModel.text.toString().trim().ifEmpty { "grok-4" })
+                    putString("deepseek_key", deepseekKey.text.toString().trim())
+                    putString("deepseek_model", deepseekModel.text.toString().trim().ifEmpty { "deepseek-chat" })
+                    putString("mistral_key", mistralKey.text.toString().trim())
+                    putString("mistral_model", mistralModel.text.toString().trim().ifEmpty { "pixtral-large-latest" })
+                    putString("openrouter_key", openrouterKey.text.toString().trim())
+                    putString("openrouter_model", openrouterModel.text.toString().trim().ifEmpty { "anthropic/claude-3.5-sonnet" })
                     putString("prompt", promptField.text.toString().trim())
                     putString("button_label", buttonLabel.text.toString().trim().ifEmpty { "AI" })
                     putInt("button_size_dp", 40 + sizeSeekBar.progress)
