@@ -127,6 +127,17 @@ class OverlayService : Service() {
         var touchX = 0f
         var touchY = 0f
         var isDrag = false
+        var isLongPress = false
+        var isHidden = false
+
+        // Долгое нажатие: переключает видимость кнопки. Она становится прозрачной
+        // (alpha = 0), но остаётся на том же месте и по-прежнему кликабельна —
+        // обычный тап по этой точке всё так же делает скриншот.
+        val longPressRunnable = Runnable {
+            isLongPress = true
+            isHidden = !isHidden
+            btn.alpha = if (isHidden) 0f else 1f
+        }
 
         btn.setOnTouchListener { _, event ->
             when (event.action) {
@@ -136,19 +147,29 @@ class OverlayService : Service() {
                     touchX = event.rawX
                     touchY = event.rawY
                     isDrag = false
+                    isLongPress = false
+                    mainHandler.postDelayed(longPressRunnable, 500)
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
                     val dx = (event.rawX - touchX).toInt()
                     val dy = (event.rawY - touchY).toInt()
-                    if (abs(dx) > 10 || abs(dy) > 10) isDrag = true
+                    if (abs(dx) > 10 || abs(dy) > 10) {
+                        isDrag = true
+                        mainHandler.removeCallbacks(longPressRunnable)
+                    }
                     params.x = initialX + dx
                     params.y = initialY + dy
                     windowManager.updateViewLayout(btn, params)
                     true
                 }
                 MotionEvent.ACTION_UP -> {
-                    if (!isDrag) captureAndSend()
+                    mainHandler.removeCallbacks(longPressRunnable)
+                    if (!isDrag && !isLongPress) captureAndSend()
+                    true
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    mainHandler.removeCallbacks(longPressRunnable)
                     true
                 }
                 else -> false
