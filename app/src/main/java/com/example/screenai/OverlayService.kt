@@ -227,15 +227,17 @@ class OverlayService : Service() {
             }))
         }
         val body = json.toString().toRequestBody("application/json".toMediaType())
+        val model = prefs.getString("gemini_model", "gemini-3.6-flash") ?: "gemini-3.6-flash"
         return Request.Builder()
-            .url("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$key")
+            .url("https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$key")
             .post(body).build()
     }
 
     private fun buildClaudeRequest(b64: String, prompt: String): Request {
         val key = prefs.getString("claude_key", "") ?: ""
+        val model = prefs.getString("claude_model", "claude-sonnet-4-5") ?: "claude-sonnet-4-5"
         val json = JSONObject().apply {
-            put("model", "claude-sonnet-4-5")
+            put("model", model)
             put("max_tokens", 1024)
             put("messages", JSONArray().put(JSONObject().apply {
                 put("role", "user")
@@ -264,8 +266,9 @@ class OverlayService : Service() {
 
     private fun buildOpenAIRequest(b64: String, prompt: String): Request {
         val key = prefs.getString("openai_key", "") ?: ""
+        val model = prefs.getString("openai_model", "gpt-4o") ?: "gpt-4o"
         val json = JSONObject().apply {
-            put("model", "gpt-4o")
+            put("model", model)
             put("messages", JSONArray().put(JSONObject().apply {
                 put("role", "user")
                 put("content", JSONArray()
