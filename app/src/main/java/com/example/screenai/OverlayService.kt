@@ -205,6 +205,10 @@ class OverlayService : Service() {
         val req: Request = when (provider) {
             "Claude" -> buildClaudeRequest(b64, prompt)
             "OpenAI" -> buildOpenAIRequest(b64, prompt)
+            "Grok" -> buildGrokRequest(b64, prompt)
+            "DeepSeek" -> buildDeepSeekRequest(prompt)
+            "Mistral" -> buildMistralRequest(b64, prompt)
+            "OpenRouter" -> buildOpenRouterRequest(b64, prompt)
             else -> buildGeminiRequest(b64, prompt)
         }
 
@@ -215,10 +219,12 @@ class OverlayService : Service() {
                 val text = try {
                     when (provider) {
                         "Claude" -> JSONObject(respBody).getJSONArray("content").getJSONObject(0).getString("text")
-                        "OpenAI" -> JSONObject(respBody).getJSONArray("choices").getJSONObject(0)
-                            .getJSONObject("message").getString("content")
-                        else -> JSONObject(respBody).getJSONArray("candidates").getJSONObject(0)
+                        "Gemini" -> JSONObject(respBody).getJSONArray("candidates").getJSONObject(0)
                             .getJSONObject("content").getJSONArray("parts").getJSONObject(0).getString("text")
+                        // OpenAI, Grok, DeepSeek, Mistral, OpenRouter все используют
+                        // одинаковый OpenAI-совместимый формат ответа.
+                        else -> JSONObject(respBody).getJSONArray("choices").getJSONObject(0)
+                            .getJSONObject("message").getString("content")
                     }
                 } catch (e: Exception) {
                     "Ошибка ($provider): $respBody"
@@ -297,6 +303,101 @@ class OverlayService : Service() {
         return Request.Builder()
             .url("https://api.openai.com/v1/chat/completions")
             .addHeader("Authorization", "Bearer $key")
+            .post(body).build()
+    }
+
+    /** Grok (xAI) — API полностью совместим с форматом OpenAI, включая картинки. */
+    private fun buildGrokRequest(b64: String, prompt: String): Request {
+        val key = prefs.getString("grok_key", "") ?: ""
+        val model = prefs.getString("grok_model", "grok-4") ?: "grok-4"
+        val json = JSONObject().apply {
+            put("model", model)
+            put("messages", JSONArray().put(JSONObject().apply {
+                put("role", "user")
+                put("content", JSONArray()
+                    .put(JSONObject().apply { put("type", "text"); put("text", prompt) })
+                    .put(JSONObject().apply {
+                        put("type", "image_url")
+                        put("image_url", JSONObject().put("url", "data:image/png;base64,$b64"))
+                    }))
+            }))
+        }
+        val body = json.toString().toRequestBody("application/json".toMediaType())
+        return Request.Builder()
+            .url("https://api.x.ai/v1/chat/completions")
+            .addHeader("Authorization", "Bearer $key")
+            .post(body).build()
+    }
+
+    /**
+     * DeepSeek — на данный момент публичное API не принимает изображения (нет vision-модели),
+     * поэтому скриншот не отправляется, а модель отвечает только на текст промпта.
+     */
+    private fun buildDeepSeekRequest(prompt: String): Request {
+        val key = prefs.getString("deepseek_key", "") ?: ""
+        val model = prefs.getString("deepseek_model", "deepseek-chat") ?: "deepseek-chat"
+        val json = JSONObject().apply {
+            put("model", model)
+            put("messages", JSONArray().put(JSONObject().apply {
+                put("role", "user")
+                put("content", "$prompt\n\n(Внимание: DeepSeek API пока не поддерживает изображения, скриншот не передан.)")
+            }))
+        }
+        val body = json.toString().toRequestBody("application/json".toMediaType())
+        return Request.Builder()
+            .url("https://api.deepseek.com/chat/completions")
+            .addHeader("Authorization", "Bearer $key")
+            .post(body).build()
+    }
+
+    /** Mistral — vision поддерживается моделями семейства Pixtral. */
+    private fun buildMistralRequest(b64: String, prompt: String): Request {
+        val key = prefs.getString("mistral_key", "") ?: ""
+        val model = prefs.getString("mistral_model", "pixtral-large-latest") ?: "pixtral-large-latest"
+        val json = JSONObject().apply {
+            put("model", model)
+            put("messages", JSONArray().put(JSONObject().apply {
+                put("role", "user")
+                put("content", JSONArray()
+                    .put(JSONObject().apply { put("type", "text"); put("text", prompt) })
+                    .put(JSONObject().apply {
+                        put("type", "image_url")
+                        put("image_url", "data:image/png;base64,$b64")
+                    }))
+            }))
+        }
+        val body = json.toString().toRequestBody("application/json".toMediaType())
+        return Request.Builder()
+            .url("https://api.mistral.ai/v1/chat/completions")
+            .addHeader("Authorization", "Bearer $key")
+            .post(body).build()
+    }
+
+    /**
+     * OpenRouter — прокси-сервис с одним ключом на десятки моделей разных провайдеров
+     * (Claude, GPT, Gemini, Grok, Llama и т.д.). Модель задаётся строкой вида "provider/model".
+     */
+    private fun buildOpenRouterRequest(b64: String, prompt: String): Request {
+        val key = prefs.getString("openrouter_key", "") ?: ""
+        val model = prefs.getString("openrouter_model", "anthropic/claude-3.5-sonnet") ?: "anthropic/claude-3.5-sonnet"
+        val json = JSONObject().apply {
+            put("model", model)
+            put("messages", JSONArray().put(JSONObject().apply {
+                put("role", "user")
+                put("content", JSONArray()
+                    .put(JSONObject().apply { put("type", "text"); put("text", prompt) })
+                    .put(JSONObject().apply {
+                        put("type", "image_url")
+                        put("image_url", JSONObject().put("url", "data:image/png;base64,$b64"))
+                    }))
+            }))
+        }
+        val body = json.toString().toRequestBody("application/json".toMediaType())
+        return Request.Builder()
+            .url("https://openrouter.ai/api/v1/chat/completions")
+            .addHeader("Authorization", "Bearer $key")
+            .addHeader("HTTP-Referer", "https://github.com/")
+            .addHeader("X-Title", "ScreenAI")
             .post(body).build()
     }
 
