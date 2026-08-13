@@ -36,7 +36,7 @@ class OverlayService : Service() {
     private var virtualDisplay: android.hardware.display.VirtualDisplay? = null
     private lateinit var imageReader: ImageReader
     private val scope = CoroutineScope(Dispatchers.IO)
-    private val GEMINI_API_KEY = "AIzaSyD_ЗАМЕНИ_НА_СВОЙ_КЛЮЧ"
+    private val GEMINI_API_KEY = "AQ.Ab8RN6JKkwMUwdrnTyfmJNOP-dg3rsMZSOOhBLeNp1gPJ_Zzug"
 
     override fun onBind(intent: Intent?): IBinder? = null
 
