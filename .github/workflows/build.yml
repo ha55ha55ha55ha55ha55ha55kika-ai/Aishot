@@ -17,8 +17,14 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
       
+      - name: Generate Gradle Wrapper
+        run: gradle wrapper --gradle-version 8.4
+      
+      - name: Make gradlew executable
+        run: chmod +x gradlew
+      
       - name: Build APK
-        run: gradle assembleDebug --no-daemon
+        run: ./gradlew assembleDebug --no-daemon
       
       - name: Upload APK
         uses: actions/upload-artifact@v4
