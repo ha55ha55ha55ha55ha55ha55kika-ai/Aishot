@@ -1,10 +1,14 @@
 package com.example.screenai
 
 import android.app.*
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.Color
 import android.graphics.PixelFormat
+import android.graphics.drawable.GradientDrawable
 import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
@@ -16,8 +20,12 @@ import android.util.Base64
 import android.util.DisplayMetrics
 import android.view.Gravity
 import android.view.MotionEvent
+import android.view.View
 import android.view.WindowManager
 import android.widget.Button
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.TextView
 import android.widget.Toast
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -30,6 +38,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 class OverlayService : Service() {
 
@@ -41,6 +50,13 @@ class OverlayService : Service() {
     private lateinit var prefs: android.content.SharedPreferences
     private lateinit var params: WindowManager.LayoutParams
     private lateinit var btn: Button
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    // Текущая "живая" карточка с ответом ИИ, которая обновляется новыми ответами,
+    // пока пользователь не закрепил её (📌) или не закрыл (✕).
+    private var activePanelView: View? = null
+    private var activePanelTextView: TextView? = null
+    private var activePanelPinned: Boolean = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -70,6 +86,10 @@ class OverlayService : Service() {
             .build()
     }
 
+    private fun overlayWindowType() =
+        if (Build.VERSION.SDK_INT >= 26) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        else WindowManager.LayoutParams.TYPE_PHONE
+
     private fun showButton() {
         val label = prefs.getString("button_label", "AI") ?: "AI"
 
@@ -80,8 +100,7 @@ class OverlayService : Service() {
         params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
-            if (Build.VERSION.SDK_INT >= 26) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-            else WindowManager.LayoutParams.TYPE_PHONE,
+            overlayWindowType(),
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
             PixelFormat.TRANSLUCENT
         )
@@ -145,7 +164,7 @@ class OverlayService : Service() {
             image.close()
             virtualDisplay?.release()
             scope.launch { sendToAI(bitmap) }
-        }, null)
+        }, mainHandler)
     }
 
     private fun imageToBitmap(image: android.media.Image, w: Int, h: Int): Bitmap {
@@ -176,19 +195,24 @@ class OverlayService : Service() {
         }
 
         val client = OkHttpClient()
-        client.newCall(req).execute().use { resp ->
-            val respBody = resp.body?.string() ?: "{}"
-            val text = try {
-                when (provider) {
-                    "Claude" -> JSONObject(respBody).getJSONArray("content").getJSONObject(0).getString("text")
-                    "OpenAI" -> JSONObject(respBody).getJSONArray("choices").getJSONObject(0)
-                        .getJSONObject("message").getString("content")
-                    else -> JSONObject(respBody).getJSONArray("candidates").getJSONObject(0)
-                        .getJSONObject("content").getJSONArray("parts").getJSONObject(0).getString("text")
+        try {
+            client.newCall(req).execute().use { resp ->
+                val respBody = resp.body?.string() ?: "{}"
+                val text = try {
+                    when (provider) {
+                        "Claude" -> JSONObject(respBody).getJSONArray("content").getJSONObject(0).getString("text")
+                        "OpenAI" -> JSONObject(respBody).getJSONArray("choices").getJSONObject(0)
+                            .getJSONObject("message").getString("content")
+                        else -> JSONObject(respBody).getJSONArray("candidates").getJSONObject(0)
+                            .getJSONObject("content").getJSONArray("parts").getJSONObject(0).getString("text")
+                    }
+                } catch (e: Exception) {
+                    "Ошибка ($provider): $respBody"
                 }
-            } catch (e: Exception) { "Ошибка ($provider): $respBody" }
-
-            showResult(text)
+                showResult(text)
+            }
+        } catch (e: Exception) {
+            showResult("Ошибка сети ($provider): ${e.message}")
         }
     }
 
@@ -204,7 +228,7 @@ class OverlayService : Service() {
         }
         val body = json.toString().toRequestBody("application/json".toMediaType())
         return Request.Builder()
-            .url("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=$key")
+            .url("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$key")
             .post(body).build()
     }
 
@@ -259,9 +283,178 @@ class OverlayService : Service() {
             .post(body).build()
     }
 
+    // ---- Панель с ответом ИИ (вместо Toast, который сам исчезал через пару секунд) ----
+
     private fun showResult(text: String) {
-        Handler(Looper.getMainLooper()).post {
-            Toast.makeText(this@OverlayService, text, Toast.LENGTH_LONG).show()
+        mainHandler.post {
+            val liveTextView = activePanelTextView
+            if (liveTextView != null && !activePanelPinned) {
+                // Обновляем текущую (незакреплённую) карточку новым текстом
+                liveTextView.text = text
+            } else {
+                // Либо карточки ещё нет, либо она закреплена — создаём новую поверх
+                createResultPanel(text)
+            }
+        }
+    }
+
+    private fun dpToPx(dp: Int): Int =
+        (dp * resources.displayMetrics.density).roundToInt()
+
+    private fun createResultPanel(initialText: String) {
+        val metrics = DisplayMetrics()
+        windowManager.defaultDisplay.getRealMetrics(metrics)
+
+        val panelParams = WindowManager.LayoutParams(
+            (metrics.widthPixels * 0.9f).roundToInt(),
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            overlayWindowType(),
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            PixelFormat.TRANSLUCENT
+        )
+        panelParams.gravity = Gravity.TOP or Gravity.START
+        panelParams.x = (metrics.widthPixels * 0.05f).roundToInt()
+        panelParams.y = (metrics.heightPixels * 0.25f).roundToInt()
+
+        val bg = GradientDrawable().apply {
+            setColor(Color.parseColor("#F2222222"))
+            cornerRadius = dpToPx(14).toFloat()
+        }
+
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = bg
+            setPadding(dpToPx(14), dpToPx(10), dpToPx(14), dpToPx(14))
+        }
+
+        // Заголовок с кнопками: 📌 закрепить, 📋 копировать, ✕ закрыть
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+
+        val title = TextView(this).apply {
+            text = "Ответ AI"
+            setTextColor(Color.WHITE)
+            textSize = 14f
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+
+        val pinButton = Button(this).apply {
+            text = "📌"
+            textSize = 14f
+            minWidth = 0
+            minimumWidth = 0
+            setPadding(dpToPx(10), 0, dpToPx(10), 0)
+        }
+
+        val copyButton = Button(this).apply {
+            text = "📋"
+            textSize = 14f
+            minWidth = 0
+            minimumWidth = 0
+            setPadding(dpToPx(10), 0, dpToPx(10), 0)
+        }
+
+        val closeButton = Button(this).apply {
+            text = "✕"
+            textSize = 14f
+            minWidth = 0
+            minimumWidth = 0
+            setPadding(dpToPx(10), 0, dpToPx(10), 0)
+        }
+
+        header.addView(title)
+        header.addView(pinButton)
+        header.addView(copyButton)
+        header.addView(closeButton)
+
+        // Текст ответа: можно выделять и копировать вручную, окно скроллится
+        val textView = TextView(this).apply {
+            text = initialText
+            setTextColor(Color.WHITE)
+            textSize = 15f
+            setTextIsSelectable(true)
+            setPadding(0, dpToPx(8), 0, 0)
+        }
+
+        val scroll = MaxHeightScrollView(this, (metrics.heightPixels * 0.5f).roundToInt()).apply {
+            addView(textView)
+        }
+
+        root.addView(header)
+        root.addView(scroll)
+
+        // Пометка "закреплено" прямо в заголовке
+        fun refreshPinnedLook(pinned: Boolean) {
+            title.text = if (pinned) "Ответ AI 📌 закреплено" else "Ответ AI"
+            pinButton.alpha = if (pinned) 1f else 0.6f
+        }
+        refreshPinnedLook(false)
+
+        // Перетаскивание карточки за заголовок
+        var initialX = 0
+        var initialY = 0
+        var touchX = 0f
+        var touchY = 0f
+        header.setOnTouchListener { _, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    initialX = panelParams.x
+                    initialY = panelParams.y
+                    touchX = event.rawX
+                    touchY = event.rawY
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    panelParams.x = initialX + (event.rawX - touchX).toInt()
+                    panelParams.y = initialY + (event.rawY - touchY).toInt()
+                    windowManager.updateViewLayout(root, panelParams)
+                    true
+                }
+                else -> false
+            }
+        }
+
+        pinButton.setOnClickListener {
+            // Закрепляем именно эту карточку: она больше не будет перезаписываться
+            // новыми ответами и останется на экране, пока её не закроют вручную.
+            if (activePanelView == root) {
+                activePanelPinned = true
+                refreshPinnedLook(true)
+                Toast.makeText(this, "Ответ закреплён — новый запрос откроет отдельную карточку", Toast.LENGTH_SHORT).show()
+            } else {
+                refreshPinnedLook(true)
+            }
+        }
+
+        copyButton.setOnClickListener {
+            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            clipboard.setPrimaryClip(ClipData.newPlainText("Ответ AI", textView.text.toString()))
+            Toast.makeText(this, "Текст скопирован", Toast.LENGTH_SHORT).show()
+        }
+
+        closeButton.setOnClickListener {
+            windowManager.removeView(root)
+            if (activePanelView == root) {
+                activePanelView = null
+                activePanelTextView = null
+                activePanelPinned = false
+            }
+        }
+
+        windowManager.addView(root, panelParams)
+
+        activePanelView = root
+        activePanelTextView = textView
+        activePanelPinned = false
+    }
+
+    /** ScrollView с ограничением по максимальной высоте, чтобы длинный ответ не выходил за экран. */
+    private class MaxHeightScrollView(context: Context, private val maxHeightPx: Int) : ScrollView(context) {
+        override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+            val capped = View.MeasureSpec.makeMeasureSpec(maxHeightPx, View.MeasureSpec.AT_MOST)
+            super.onMeasure(widthMeasureSpec, capped)
         }
     }
 
