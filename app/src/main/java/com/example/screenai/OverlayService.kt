@@ -750,6 +750,7 @@ class OverlayService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         virtualDisplay?.release()
-        mediaProjection.stop()
+        mediaProjection?.stop()
+        cameraDevice?.close()
     }
 }
