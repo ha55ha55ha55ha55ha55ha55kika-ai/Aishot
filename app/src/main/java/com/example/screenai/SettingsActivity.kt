@@ -8,6 +8,7 @@ import android.os.Bundle
 import android.widget.*
 import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Callback
@@ -24,21 +25,25 @@ class SettingsActivity : Activity() {
         super.onCreate(savedInstanceState)
         prefs = getSharedPreferences("screenai_prefs", Context.MODE_PRIVATE)
 
-        val scroll = ScrollView(this)
+        fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+
+        val scroll = ScrollView(this).apply {
+            background = Ui.screenBackground()
+        }
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(40, 40, 40, 40)
+            setPadding(dp(24), dp(24), dp(24), dp(24))
         }
         scroll.addView(layout)
         setContentView(scroll)
 
         fun label(text: String) = TextView(this).apply {
             this.text = text
-            textSize = 16f
-            setPadding(0, 30, 0, 10)
+            textSize = 15f
+            setTextColor(Color.parseColor(Ui.TEXT_SECONDARY))
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setPadding(0, dp(22), 0, dp(8))
         }
-
-        fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
         // Провайдер
         layout.addView(label("Активный AI провайдер:"))
@@ -61,9 +66,25 @@ class SettingsActivity : Activity() {
         layout.addView(TextView(this).apply {
             text = "В режиме \"Микс\" появятся две отдельные кнопки — одна для скриншота, другая для снимка с фронтальной камеры. Смена режима применится после перезапуска плавающей кнопки."
             textSize = 12f
-            setPadding(0, 6, 0, 10)
-            alpha = 0.7f
+            setTextColor(Color.parseColor(Ui.TEXT_SECONDARY))
+            setPadding(0, dp(6), 0, dp(10))
         })
+
+        layout.addView(label("Название левой кнопки (скриншот):"))
+        val mixLabelScreenshot = EditText(this).apply {
+            setText(prefs.getString("mix_label_screenshot", "Скрин"))
+            hint = "Скрин"
+        }
+        Ui.styleField(this, mixLabelScreenshot)
+        layout.addView(mixLabelScreenshot)
+
+        layout.addView(label("Название правой кнопки (камера):"))
+        val mixLabelCamera = EditText(this).apply {
+            setText(prefs.getString("mix_label_camera", "Камера"))
+            hint = "Камера"
+        }
+        Ui.styleField(this, mixLabelCamera)
+        layout.addView(mixLabelCamera)
 
         // Ключи
         layout.addView(label("Gemini API ключ:"))
@@ -290,10 +311,18 @@ class SettingsActivity : Activity() {
         // Сохранить
         val saveBtn = Button(this).apply {
             text = "Сохранить"
+            isAllCaps = false
+            setTextColor(Color.WHITE)
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            background = Ui.accentButtonBackground(this@SettingsActivity)
+            setPadding(dp(24), dp(16), dp(24), dp(16))
+            stateListAnimator = null
             setOnClickListener {
                 prefs.edit().apply {
                     putString("provider", providers[providerSpinner.selectedItemPosition])
                     putString("capture_mode", captureModeKeys[captureModeSpinner.selectedItemPosition])
+                    putString("mix_label_screenshot", mixLabelScreenshot.text.toString().trim().ifEmpty { "Скрин" })
+                    putString("mix_label_camera", mixLabelCamera.text.toString().trim().ifEmpty { "Камера" })
                     putString("gemini_key", geminiKey.text.toString().trim())
                     val chosenGeminiModel = if (geminiModelSpinner.selectedItemPosition == geminiModels.size - 1)
                         geminiModelCustom.text.toString().trim().ifEmpty { "gemini-3.6-flash" }
@@ -322,7 +351,16 @@ class SettingsActivity : Activity() {
             }
         }
         layout.addView(saveBtn, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-            topMargin = 40
+            topMargin = dp(28)
+            bottomMargin = dp(20)
         })
+
+        // Единый стиль для всех текстовых полей на экране — красивые скруглённые
+        // тёмные поля вместо системных подчёркнутых EditText.
+        fun styleAllFields(v: View) {
+            if (v is EditText) Ui.styleField(this, v)
+            if (v is ViewGroup) for (i in 0 until v.childCount) styleAllFields(v.getChildAt(i))
+        }
+        styleAllFields(layout)
     }
 }
