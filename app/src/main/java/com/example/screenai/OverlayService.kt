@@ -118,8 +118,10 @@ class OverlayService : Service() {
                 gravity = Gravity.CENTER
                 background = buildButtonDrawable(color, sizePx)
             }
-            val screenshotBtn = miniButton("📷\nСкрин")
-            val cameraBtn = miniButton("🤳\nКамера")
+            val labelScreenshot = prefs.getString("mix_label_screenshot", "Скрин") ?: "Скрин"
+            val labelCamera = prefs.getString("mix_label_camera", "Камера") ?: "Камера"
+            val screenshotBtn = miniButton("📷\n$labelScreenshot")
+            val cameraBtn = miniButton("🤳\n$labelCamera")
             container.addView(screenshotBtn, LinearLayout.LayoutParams(sizePx, sizePx))
             container.addView(cameraBtn, LinearLayout.LayoutParams(sizePx, sizePx).apply { marginStart = dpToPx(6) })
             rootView = container
