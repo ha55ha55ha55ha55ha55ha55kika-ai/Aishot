@@ -8,6 +8,13 @@ import android.os.Bundle
 import android.widget.*
 import android.view.Gravity
 import android.view.View
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.Callback
+import okhttp3.Call
+import okhttp3.Response
+import org.json.JSONObject
+import java.io.IOException
 
 class SettingsActivity : Activity() {
 
@@ -41,6 +48,22 @@ class SettingsActivity : Activity() {
         val currentProvider = prefs.getString("provider", "Gemini")
         providerSpinner.setSelection(providers.indexOf(currentProvider).coerceAtLeast(0))
         layout.addView(providerSpinner)
+
+        // Режим захвата: что отправлять в ИИ по нажатию кнопки
+        layout.addView(label("Режим кнопки:"))
+        val captureModes = arrayOf("Скриншот", "Фронтальная камера", "Микс (обе кнопки)")
+        val captureModeKeys = arrayOf("screenshot", "camera", "mix")
+        val captureModeSpinner = Spinner(this)
+        captureModeSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, captureModes)
+        val savedCaptureMode = prefs.getString("capture_mode", "screenshot") ?: "screenshot"
+        captureModeSpinner.setSelection(captureModeKeys.indexOf(savedCaptureMode).coerceAtLeast(0))
+        layout.addView(captureModeSpinner)
+        layout.addView(TextView(this).apply {
+            text = "В режиме \"Микс\" появятся две отдельные кнопки — одна для скриншота, другая для снимка с фронтальной камеры. Смена режима применится после перезапуска плавающей кнопки."
+            textSize = 12f
+            setPadding(0, 6, 0, 10)
+            alpha = 0.7f
+        })
 
         // Ключи
         layout.addView(label("Gemini API ключ:"))
@@ -270,6 +293,7 @@ class SettingsActivity : Activity() {
             setOnClickListener {
                 prefs.edit().apply {
                     putString("provider", providers[providerSpinner.selectedItemPosition])
+                    putString("capture_mode", captureModeKeys[captureModeSpinner.selectedItemPosition])
                     putString("gemini_key", geminiKey.text.toString().trim())
                     val chosenGeminiModel = if (geminiModelSpinner.selectedItemPosition == geminiModels.size - 1)
                         geminiModelCustom.text.toString().trim().ifEmpty { "gemini-3.6-flash" }
