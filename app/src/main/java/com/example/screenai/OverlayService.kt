@@ -59,21 +59,46 @@ class OverlayService : Service() {
     private var activePanelTextView: TextView? = null
     private var activePanelPinned: Boolean = false
 
+    // Обязателен на Android 14+ (API 34): без зарегистрированного колбэка система
+    // выбрасывает SecurityException при первой же попытке createVirtualDisplay(),
+    // даже если mediaProjection != null. Также ловит момент, когда пользователь
+    // сам остановил трансляцию из системной плашки — тогда токен больше не
+    // рабочий, и это нужно отразить в состоянии сервиса, а не притворяться,
+    // что всё ок.
+    private val projectionCallback = object : MediaProjection.Callback() {
+        override fun onStop() {
+            virtualDisplay?.release()
+            virtualDisplay = null
+            mediaProjection = null
+        }
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         prefs = getSharedPreferences("screenai_prefs", Context.MODE_PRIVATE)
         startForeground(1, buildNotification())
 
-        val resultCode = intent!!.getIntExtra("resultCode", -1)
-        val data = intent.getParcelableExtra<Intent>("data")
-        if (resultCode != -1 && data != null) {
-            val pm = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-            mediaProjection = pm.getMediaProjection(resultCode, data)
+        // intent может быть null, если систему перезапускает сервис сама
+        // (START_STICKY после убийства процесса) — это нормальная ситуация,
+        // а не повод падать. Старый токен MediaProjection в любом случае
+        // невосстановим после смерти процесса, поэтому просто не трогаем
+        // его здесь и не крашимся.
+        if (intent != null) {
+            val resultCode = intent.getIntExtra("resultCode", -1)
+            val data = intent.getParcelableExtra<Intent>("data")
+            if (resultCode == Activity.RESULT_OK && data != null) {
+                val pm = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                mediaProjection?.unregisterCallback(projectionCallback)
+                mediaProjection = pm.getMediaProjection(resultCode, data)
+                mediaProjection?.registerCallback(projectionCallback, mainHandler)
+            }
         }
 
-        windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
-        showButton()
+        if (!::windowManager.isInitialized) {
+            windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+            showButton()
+        }
         return START_STICKY
     }
 
@@ -237,12 +262,24 @@ class OverlayService : Service() {
         val h = metrics.heightPixels
         val dpi = metrics.densityDpi
 
-        imageReader = ImageReader.newInstance(w, h, PixelFormat.RGBA_8888, 2)
-        virtualDisplay = projection.createVirtualDisplay(
-            "ScreenAI", w, h, dpi,
-            android.hardware.display.DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-            imageReader.surface, null, null
-        )
+        try {
+            imageReader = ImageReader.newInstance(w, h, PixelFormat.RGBA_8888, 2)
+            virtualDisplay = projection.createVirtualDisplay(
+                "ScreenAI", w, h, dpi,
+                android.hardware.display.DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                imageReader.surface, null, null
+            )
+        } catch (e: SecurityException) {
+            // Токен протух (например, режим захвата поменяли в настройках без
+            // перезапуска плавающей кнопки, либо пользователь остановил запись
+            // экрана из системной плашки). Просим переоткрыть через главный экран.
+            mediaProjection = null
+            showResult("Разрешение на запись экрана устарело. Откройте ScreenAI и нажмите «Запустить плавающую кнопку» ещё раз.")
+            return
+        } catch (e: Exception) {
+            showResult("Не удалось начать съёмку экрана: ${e.message}")
+            return
+        }
 
         imageReader.setOnImageAvailableListener({ reader ->
             val image = reader.acquireLatestImage() ?: return@setOnImageAvailableListener
@@ -752,6 +789,7 @@ class OverlayService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         virtualDisplay?.release()
+        mediaProjection?.unregisterCallback(projectionCallback)
         mediaProjection?.stop()
         cameraDevice?.close()
     }
