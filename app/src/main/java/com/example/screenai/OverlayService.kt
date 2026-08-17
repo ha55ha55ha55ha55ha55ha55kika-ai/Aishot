@@ -265,44 +265,59 @@ class OverlayService : Service() {
         windowManager.addView(btn, params)
     }
 
+    private var capturedW = 0
+    private var capturedH = 0
+    // VirtualDisplay зеркалит экран непрерывно (AUTO_MIRROR), поэтому кадры в
+    // ImageReader сыпятся постоянно, а не только по нажатию кнопки. Этот флаг
+    // "взводится" по нажатию и говорит слушателю: следующий пришедший кадр —
+    // это и есть нужный скриншот, обработать и отправить в ИИ. Остальные кадры
+    // просто закрываются без дальнейших действий.
+    @Volatile private var captureArmed = false
+
     private fun captureAndSend() {
         val projection = mediaProjection
         if (projection == null) {
-            showResult("Скриншот недоступен: разрешение на запись экрана не выдано (режим камеры)")
-            return
-        }
-        val metrics = DisplayMetrics()
-        windowManager.defaultDisplay.getRealMetrics(metrics)
-        val w = metrics.widthPixels
-        val h = metrics.heightPixels
-        val dpi = metrics.densityDpi
-
-        try {
-            imageReader = ImageReader.newInstance(w, h, PixelFormat.RGBA_8888, 2)
-            virtualDisplay = projection.createVirtualDisplay(
-                "ScreenAI", w, h, dpi,
-                android.hardware.display.DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                imageReader.surface, null, null
-            )
-        } catch (e: SecurityException) {
-            // Токен протух (например, режим захвата поменяли в настройках без
-            // перезапуска плавающей кнопки, либо пользователь остановил запись
-            // экрана из системной плашки). Просим переоткрыть через главный экран.
-            mediaProjection = null
-            showResult("Разрешение на запись экрана устарело. Откройте ScreenAI и нажмите «Запустить плавающую кнопку» ещё раз.")
-            return
-        } catch (e: Exception) {
-            showResult("Не удалось начать съёмку экрана: ${e.message}")
+            showResult("Скриншот недоступен: разрешение на запись экрана не выдано")
             return
         }
 
-        imageReader.setOnImageAvailableListener({ reader ->
-            val image = reader.acquireLatestImage() ?: return@setOnImageAvailableListener
-            val bitmap = imageToBitmap(image, w, h)
-            image.close()
-            virtualDisplay?.release()
-            scope.launch { sendToAI(bitmap) }
-        }, mainHandler)
+        // VirtualDisplay создаём ОДИН раз и переиспользуем для всех последующих
+        // скриншотов — пересоздание его на каждое нажатие (create/release по кругу)
+        // на части прошивок (в частности HyperOS) приводит к тому, что система
+        // считает разрешение на запись экрана "исчерпанным" уже после первого
+        // кадра. Держим его живым до onDestroy().
+        if (virtualDisplay == null) {
+            val metrics = DisplayMetrics()
+            windowManager.defaultDisplay.getRealMetrics(metrics)
+            capturedW = metrics.widthPixels
+            capturedH = metrics.heightPixels
+            val dpi = metrics.densityDpi
+            try {
+                imageReader = ImageReader.newInstance(capturedW, capturedH, PixelFormat.RGBA_8888, 2)
+                virtualDisplay = projection.createVirtualDisplay(
+                    "ScreenAI", capturedW, capturedH, dpi,
+                    android.hardware.display.DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                    imageReader.surface, null, null
+                )
+                imageReader.setOnImageAvailableListener({ reader ->
+                    val image = reader.acquireLatestImage() ?: return@setOnImageAvailableListener
+                    if (!captureArmed) {
+                        image.close()
+                        return@setOnImageAvailableListener
+                    }
+                    captureArmed = false
+                    val bitmap = imageToBitmap(image, capturedW, capturedH)
+                    image.close()
+                    scope.launch { sendToAI(bitmap) }
+                }, mainHandler)
+            } catch (e: Exception) {
+                virtualDisplay = null
+                showResult("Не удалось начать съёмку экрана: ${e.message}")
+                return
+            }
+        }
+
+        captureArmed = true
     }
 
     // Снимок с фронтальной камеры вместо экрана. Использует тот же sendToAI(bitmap),
