@@ -2,14 +2,19 @@ package com.example.screenai
 
 import android.app.Activity
 import android.content.Context
+import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.content.Intent
+import android.media.projection.MediaProjectionManager
+import android.os.Build
 import android.os.Bundle
 import android.widget.*
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Callback
@@ -21,6 +26,16 @@ import java.io.IOException
 class SettingsActivity : Activity() {
 
     private lateinit var prefs: android.content.SharedPreferences
+
+    private val projectionManager by lazy {
+        getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+    }
+    // Как и в MainActivity: разрешение на экран (шаг 1) сохраняется здесь, пока
+    // (при необходимости) не запросим разрешение на камеру (шаг 2) — два
+    // ПОСЛЕДОВАТЕЛЬНЫХ системных диалога вместо вложенных.
+    private var pendingResultCode: Int = -1
+    private var pendingData: Intent? = null
+    private var pendingNewMode: String = ""
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -349,22 +364,18 @@ class SettingsActivity : Activity() {
                 }
                 val newMode = captureModeKeys[captureModeSpinner.selectedItemPosition]
                 if (newMode != savedCaptureMode) {
-                    // Режим захвата поменялся — уже выданное разрешение на запись
-                    // экрана могло не запрашиваться вовсе (например, был режим
-                    // "камера"). Останавливаем плавающую кнопку, чтобы она не
-                    // продолжала висеть с неверным/отсутствующим разрешением, и
-                    // просим пользователя запустить её заново с главного экрана —
-                    // тогда система корректно спросит нужное разрешение под новый режим.
-                    stopService(Intent(this@SettingsActivity, OverlayService::class.java))
-                    Toast.makeText(
-                        this@SettingsActivity,
-                        "Сохранено. Режим захвата изменён — откройте ScreenAI и запустите кнопку заново",
-                        Toast.LENGTH_LONG
-                    ).show()
+                    // Режим захвата поменялся — старому запущенному сервису может
+                    // не хватать нужного разрешения (например, был режим "камера").
+                    // Вместо того чтобы просто глушить кнопку и просить пользователя
+                    // идти на главный экран, переспрашиваем разрешение прямо тут и
+                    // сразу перезапускаем кнопку с новым разрешением — так же
+                    // удобно, как было раньше.
+                    pendingNewMode = newMode
+                    requestPermissionsForMode(newMode)
                 } else {
                     Toast.makeText(this@SettingsActivity, "Сохранено", Toast.LENGTH_SHORT).show()
+                    finish()
                 }
-                finish()
             }
         }
         layout.addView(saveBtn, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
@@ -379,5 +390,72 @@ class SettingsActivity : Activity() {
             if (v is ViewGroup) for (i in 0 until v.childCount) styleAllFields(v.getChildAt(i))
         }
         styleAllFields(layout)
+    }
+
+    // Шаг 1 из 2: если новому режиму нужны скриншоты — просим разрешение на запись
+    // экрана. Если нужна только камера — сразу к шагу 2.
+    private fun requestPermissionsForMode(mode: String) {
+        val needsScreenshot = mode == "screenshot" || mode == "mix"
+        if (needsScreenshot) {
+            startActivityForResult(projectionManager.createScreenCaptureIntent(), 2001)
+        } else {
+            requestCameraThenRestart(mode)
+        }
+    }
+
+    // Шаг 2 из 2: просим разрешение на камеру, если оно нужно и ещё не выдано.
+    private fun requestCameraThenRestart(mode: String) {
+        val needsCamera = mode == "camera" || mode == "mix"
+        if (needsCamera && ContextCompat.checkSelfPermission(this, android.Manifest.permission.CAMERA)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            ActivityCompat.requestPermissions(this, arrayOf(android.Manifest.permission.CAMERA), 2002)
+            return
+        }
+        restartOverlayService()
+    }
+
+    private fun restartOverlayService() {
+        stopService(Intent(this, OverlayService::class.java))
+        val svc = Intent(this, OverlayService::class.java).apply {
+            putExtra("resultCode", pendingResultCode)
+            if (pendingData != null) putExtra("data", pendingData)
+        }
+        try {
+            if (Build.VERSION.SDK_INT >= 26) startForegroundService(svc) else startService(svc)
+            Toast.makeText(this, "Сохранено, кнопка перезапущена", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            Toast.makeText(
+                this,
+                "Сохранено, но не удалось перезапустить кнопку: ${e.javaClass.simpleName}",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+        pendingResultCode = -1
+        pendingData = null
+        finish()
+    }
+
+    override fun onActivityResult(reqCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(reqCode, resultCode, data)
+        if (reqCode == 2001) {
+            if (resultCode == Activity.RESULT_OK && data != null) {
+                pendingResultCode = resultCode
+                pendingData = data
+                requestCameraThenRestart(pendingNewMode)
+            } else {
+                // Отказался — настройки уже сохранены, старая кнопка (если была)
+                // продолжает работать со старым режимом/разрешением, ничего не рушим.
+                Toast.makeText(this, "Сохранено. Разрешение на экран не выдано — кнопка не перезапущена", Toast.LENGTH_LONG).show()
+                finish()
+            }
+        }
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 2002) {
+            restartOverlayService()
+        }
     }
 }
