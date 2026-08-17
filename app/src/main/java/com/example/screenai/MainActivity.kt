@@ -167,7 +167,24 @@ class MainActivity : Activity() {
             putExtra("resultCode", resultCode)
             if (data != null) putExtra("data", data)
         }
-        if (Build.VERSION.SDK_INT >= 26) startForegroundService(svc) else startService(svc)
+        try {
+            if (Build.VERSION.SDK_INT >= 26) startForegroundService(svc) else startService(svc)
+        } catch (e: Exception) {
+            // На MIUI/HyperOS (и некоторых других прошивках) запуск foreground-сервиса
+            // с типом mediaProjection может быть заблокирован системой, если у
+            // приложения не включены доп. разрешения прошивки (автозапуск, показ
+            // поверх окон в фоне и т.п.) — раньше это просто крашило всё приложение.
+            android.widget.Toast.makeText(
+                this,
+                "Не удалось запустить: ${e.javaClass.simpleName}. На MIUI/HyperOS откройте " +
+                    "Настройки → Приложения → ScreenAI → Доп. разрешения и включите " +
+                    "\"Автозапуск\" и \"Показ всплывающих окон в фоне\", затем попробуйте снова.",
+                android.widget.Toast.LENGTH_LONG
+            ).show()
+            pendingResultCode = -1
+            pendingData = null
+            return
+        }
         pendingResultCode = -1
         pendingData = null
         finish()
