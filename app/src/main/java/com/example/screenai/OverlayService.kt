@@ -77,7 +77,22 @@ class OverlayService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         prefs = getSharedPreferences("screenai_prefs", Context.MODE_PRIVATE)
-        startForeground(1, buildNotification())
+        try {
+            startForeground(1, buildNotification())
+        } catch (e: Exception) {
+            // На части прошивок (MIUI/HyperOS) может быть заблокирован запуск
+            // foreground-сервиса с типом mediaProjection, если не включены доп.
+            // разрешения прошивки. Раньше это крашило процесс без объяснений.
+            android.widget.Toast.makeText(
+                this,
+                "Системе не разрешено запустить сервис захвата экрана. " +
+                    "На MIUI/HyperOS: Настройки → Приложения → ScreenAI → " +
+                    "Доп. разрешения → включите Автозапуск и Показ окон в фоне.",
+                android.widget.Toast.LENGTH_LONG
+            ).show()
+            stopSelf()
+            return START_NOT_STICKY
+        }
 
         // intent может быть null, если систему перезапускает сервис сама
         // (START_STICKY после убийства процесса) — это нормальная ситуация,
