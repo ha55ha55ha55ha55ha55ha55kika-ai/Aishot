@@ -159,11 +159,17 @@ class MainActivity : Activity() {
     }
 
     private fun startOverlayService(resultCode: Int, data: Intent?) {
+        // Всегда глушим предыдущий инстанс перед запуском нового: если пользователь
+        // сменил режим захвата в настройках или повторно жмёт "Запустить", старый
+        // сервис мог держать протухший/не тот MediaProjection и окно кнопки.
+        stopService(Intent(this, OverlayService::class.java))
         val svc = Intent(this, OverlayService::class.java).apply {
             putExtra("resultCode", resultCode)
             if (data != null) putExtra("data", data)
         }
         if (Build.VERSION.SDK_INT >= 26) startForegroundService(svc) else startService(svc)
+        pendingResultCode = -1
+        pendingData = null
         finish()
     }
 
