@@ -45,7 +45,14 @@ class SettingsActivity : Activity() {
             setPadding(0, dp(22), 0, dp(8))
         }
 
-        // Провайдер
+        // Небольшая обёртка-секция: свой LinearLayout, который можно целиком
+        // показать/спрятать одним вызовом — так на экране остаются видны
+        // только поля, реально относящиеся к выбранному провайдеру/режиму.
+        fun section(): LinearLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+
+        // ---- Провайдер ----
         layout.addView(label("Активный AI провайдер:"))
         val providerSpinner = Spinner(this)
         val providers = arrayOf("Gemini", "Claude", "OpenAI", "Grok", "DeepSeek", "Mistral", "OpenRouter")
@@ -54,7 +61,7 @@ class SettingsActivity : Activity() {
         providerSpinner.setSelection(providers.indexOf(currentProvider).coerceAtLeast(0))
         layout.addView(providerSpinner)
 
-        // Режим захвата: что отправлять в ИИ по нажатию кнопки
+        // ---- Режим захвата ----
         layout.addView(label("Режим кнопки:"))
         val captureModes = arrayOf("Скриншот", "Фронтальная камера", "Микс (обе кнопки)")
         val captureModeKeys = arrayOf("screenshot", "camera", "mix")
@@ -64,37 +71,35 @@ class SettingsActivity : Activity() {
         captureModeSpinner.setSelection(captureModeKeys.indexOf(savedCaptureMode).coerceAtLeast(0))
         layout.addView(captureModeSpinner)
         layout.addView(TextView(this).apply {
-            text = "В режиме \"Микс\" появятся две отдельные кнопки — одна для скриншота, другая для снимка с фронтальной камеры. Смена режима применится после перезапуска плавающей кнопки."
+            text = "В режиме \"Микс\" появятся две отдельные кнопки — одна для скриншота, другая для снимка с фронтальной камеры."
             textSize = 12f
             setTextColor(Color.parseColor(Ui.TEXT_SECONDARY))
             setPadding(0, dp(6), 0, dp(10))
         })
 
-        layout.addView(label("Название левой кнопки (скриншот):"))
+        // Названия кнопок для режима "Микс" — видно только когда он выбран
+        val mixSection = section()
+        mixSection.addView(label("Название левой кнопки (скриншот):"))
         val mixLabelScreenshot = EditText(this).apply {
             setText(prefs.getString("mix_label_screenshot", "Скрин"))
             hint = "Скрин"
         }
-        Ui.styleField(this, mixLabelScreenshot)
-        layout.addView(mixLabelScreenshot)
-
-        layout.addView(label("Название правой кнопки (камера):"))
+        mixSection.addView(mixLabelScreenshot)
+        mixSection.addView(label("Название правой кнопки (камера):"))
         val mixLabelCamera = EditText(this).apply {
             setText(prefs.getString("mix_label_camera", "Камера"))
             hint = "Камера"
         }
-        Ui.styleField(this, mixLabelCamera)
-        layout.addView(mixLabelCamera)
+        mixSection.addView(mixLabelCamera)
+        layout.addView(mixSection)
 
-        // Ключи
-        layout.addView(label("Gemini API ключ:"))
+        // ---- Ключи и модели по провайдерам (каждый — своя секция) ----
+
+        val geminiSection = section()
+        geminiSection.addView(label("Gemini API ключ:"))
         val geminiKey = EditText(this).apply { setText(prefs.getString("gemini_key", "")) }
-        layout.addView(geminiKey)
-
-        // Модель Gemini: список известных моделей + возможность вписать свою вручную
-        // (Google часто переименовывает модели, поэтому список не всегда актуален —
-        // выбирайте "Своя модель (ввести вручную)" и вписывайте точный ID из документации Google).
-        layout.addView(label("Модель Gemini:"))
+        geminiSection.addView(geminiKey)
+        geminiSection.addView(label("Модель Gemini:"))
         val geminiModels = arrayOf(
             "gemini-3.6-flash",
             "gemini-3.5-flash-lite",
@@ -125,78 +130,121 @@ class SettingsActivity : Activity() {
             }
             override fun onNothingSelected(parent: AdapterView<*>?) {}
         }
-        layout.addView(geminiModelSpinner)
-        layout.addView(geminiModelCustom)
+        geminiSection.addView(geminiModelSpinner)
+        geminiSection.addView(geminiModelCustom)
+        layout.addView(geminiSection)
 
-        layout.addView(label("Claude API ключ:"))
+        val claudeSection = section()
+        claudeSection.addView(label("Claude API ключ:"))
         val claudeKey = EditText(this).apply { setText(prefs.getString("claude_key", "")) }
-        layout.addView(claudeKey)
-
-        layout.addView(label("Модель Claude:"))
+        claudeSection.addView(claudeKey)
+        claudeSection.addView(label("Модель Claude:"))
         val claudeModel = EditText(this).apply {
             setText(prefs.getString("claude_model", "claude-sonnet-4-5"))
             hint = "Например: claude-sonnet-4-5, claude-opus-4-8"
         }
-        layout.addView(claudeModel)
+        claudeSection.addView(claudeModel)
+        layout.addView(claudeSection)
 
-        layout.addView(label("OpenAI API ключ:"))
+        val openaiSection = section()
+        openaiSection.addView(label("OpenAI API ключ:"))
         val openaiKey = EditText(this).apply { setText(prefs.getString("openai_key", "")) }
-        layout.addView(openaiKey)
-
-        layout.addView(label("Модель OpenAI:"))
+        openaiSection.addView(openaiKey)
+        openaiSection.addView(label("Модель OpenAI:"))
         val openaiModel = EditText(this).apply {
             setText(prefs.getString("openai_model", "gpt-4o"))
             hint = "Например: gpt-4o, gpt-5"
         }
-        layout.addView(openaiModel)
+        openaiSection.addView(openaiModel)
+        layout.addView(openaiSection)
 
-        layout.addView(label("Grok (xAI) API ключ:"))
+        val grokSection = section()
+        grokSection.addView(label("Grok (xAI) API ключ:"))
         val grokKey = EditText(this).apply { setText(prefs.getString("grok_key", "")) }
-        layout.addView(grokKey)
-
-        layout.addView(label("Модель Grok:"))
+        grokSection.addView(grokKey)
+        grokSection.addView(label("Модель Grok:"))
         val grokModel = EditText(this).apply {
             setText(prefs.getString("grok_model", "grok-4"))
             hint = "Например: grok-4, grok-2-vision-1212"
         }
-        layout.addView(grokModel)
+        grokSection.addView(grokModel)
+        layout.addView(grokSection)
 
-        layout.addView(label("DeepSeek API ключ:"))
+        val deepseekSection = section()
+        deepseekSection.addView(label("DeepSeek API ключ:"))
         val deepseekKey = EditText(this).apply { setText(prefs.getString("deepseek_key", "")) }
-        layout.addView(deepseekKey)
-
-        layout.addView(label("Модель DeepSeek (без поддержки скриншотов):"))
+        deepseekSection.addView(deepseekKey)
+        deepseekSection.addView(label("Модель DeepSeek (без поддержки скриншотов):"))
         val deepseekModel = EditText(this).apply {
             setText(prefs.getString("deepseek_model", "deepseek-chat"))
             hint = "Например: deepseek-chat, deepseek-reasoner"
         }
-        layout.addView(deepseekModel)
+        deepseekSection.addView(deepseekModel)
+        layout.addView(deepseekSection)
 
-        layout.addView(label("Mistral API ключ:"))
+        val mistralSection = section()
+        mistralSection.addView(label("Mistral API ключ:"))
         val mistralKey = EditText(this).apply { setText(prefs.getString("mistral_key", "")) }
-        layout.addView(mistralKey)
-
-        layout.addView(label("Модель Mistral:"))
+        mistralSection.addView(mistralKey)
+        mistralSection.addView(label("Модель Mistral:"))
         val mistralModel = EditText(this).apply {
             setText(prefs.getString("mistral_model", "pixtral-large-latest"))
             hint = "Например: pixtral-large-latest"
         }
-        layout.addView(mistralModel)
+        mistralSection.addView(mistralModel)
+        layout.addView(mistralSection)
 
-        layout.addView(label("OpenRouter API ключ (доступ ко многим моделям одним ключом):"))
+        val openrouterSection = section()
+        openrouterSection.addView(label("OpenRouter API ключ (доступ ко многим моделям одним ключом):"))
         val openrouterKey = EditText(this).apply { setText(prefs.getString("openrouter_key", "")) }
-        layout.addView(openrouterKey)
-
-        layout.addView(label("Модель OpenRouter:"))
+        openrouterSection.addView(openrouterKey)
+        openrouterSection.addView(label("Модель OpenRouter:"))
         val openrouterModel = EditText(this).apply {
             setText(prefs.getString("openrouter_model", "anthropic/claude-3.5-sonnet"))
             hint = "Например: anthropic/claude-3.5-sonnet, x-ai/grok-2-vision-1212"
         }
-        layout.addView(openrouterModel)
+        openrouterSection.addView(openrouterModel)
+        layout.addView(openrouterSection)
+
+        val providerSections = mapOf(
+            "Gemini" to geminiSection,
+            "Claude" to claudeSection,
+            "OpenAI" to openaiSection,
+            "Grok" to grokSection,
+            "DeepSeek" to deepseekSection,
+            "Mistral" to mistralSection,
+            "OpenRouter" to openrouterSection
+        )
+
+        fun updateProviderVisibility() {
+            val selected = providers[providerSpinner.selectedItemPosition]
+            providerSections.forEach { (name, sec) ->
+                sec.visibility = if (name == selected) View.VISIBLE else View.GONE
+            }
+        }
+
+        fun updateModeVisibility() {
+            val selected = captureModeKeys[captureModeSpinner.selectedItemPosition]
+            mixSection.visibility = if (selected == "mix") View.VISIBLE else View.GONE
+        }
+
+        providerSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                updateProviderVisibility()
+            }
+            override fun onNothingSelected(parent: AdapterView<*>?) {}
+        }
+        captureModeSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                updateModeVisibility()
+            }
+            override fun onNothingSelected(parent: AdapterView<*>?) {}
+        }
+        updateProviderVisibility()
+        updateModeVisibility()
 
         // ---- Внешний вид плавающей кнопки ----
 
-        // Размер кнопки (в dp)
         layout.addView(label("Размер кнопки AI:"))
         val sizeValueLabel = TextView(this)
         val savedSize = prefs.getInt("button_size_dp", 56)
@@ -215,7 +263,6 @@ class SettingsActivity : Activity() {
         layout.addView(sizeSeekBar)
         layout.addView(sizeValueLabel)
 
-        // Цвет кнопки: палитра готовых цветов + свои RGB-ползунки с превью
         layout.addView(label("Цвет кнопки:"))
         val savedColor = prefs.getInt("button_color", Color.parseColor("#2196F3"))
 
@@ -234,20 +281,18 @@ class SettingsActivity : Activity() {
             (colorPreview.background as GradientDrawable).setColor(color)
         }
 
-        // Готовая палитра
         val palette = intArrayOf(
-            Color.parseColor("#2196F3"), // синий
-            Color.parseColor("#4CAF50"), // зелёный
-            Color.parseColor("#F44336"), // красный
-            Color.parseColor("#FF9800"), // оранжевый
-            Color.parseColor("#9C27B0"), // фиолетовый
-            Color.parseColor("#00BCD4"), // бирюзовый
-            Color.parseColor("#FFEB3B"), // жёлтый
-            Color.parseColor("#607D8B")  // серый
+            Color.parseColor("#2196F3"),
+            Color.parseColor("#4CAF50"),
+            Color.parseColor("#F44336"),
+            Color.parseColor("#FF9800"),
+            Color.parseColor("#9C27B0"),
+            Color.parseColor("#00BCD4"),
+            Color.parseColor("#FFEB3B"),
+            Color.parseColor("#607D8B")
         )
         val paletteRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
 
-        // R/G/B ползунки — объявляем заранее, чтобы палитра могла их обновлять
         val redSeek = SeekBar(this).apply { max = 255 }
         val greenSeek = SeekBar(this).apply { max = 255 }
         val blueSeek = SeekBar(this).apply { max = 255 }
@@ -293,7 +338,6 @@ class SettingsActivity : Activity() {
         layout.addView(greenSeek)
         layout.addView(blueSeek)
 
-        // Промпт
         layout.addView(label("Промпт (что спрашивать у AI):"))
         val promptField = EditText(this).apply {
             setText(prefs.getString("prompt", "Опиши что на экране. Если ошибка - предложи решение."))
@@ -301,14 +345,12 @@ class SettingsActivity : Activity() {
         }
         layout.addView(promptField)
 
-        // Текст на кнопке
         layout.addView(label("Текст на плавающей кнопке:"))
         val buttonLabel = EditText(this).apply {
             setText(prefs.getString("button_label", "AI"))
         }
         layout.addView(buttonLabel)
 
-        // Сохранить
         val saveBtn = Button(this).apply {
             text = "Сохранить"
             isAllCaps = false
@@ -355,8 +397,6 @@ class SettingsActivity : Activity() {
             bottomMargin = dp(20)
         })
 
-        // Единый стиль для всех текстовых полей на экране — красивые скруглённые
-        // тёмные поля вместо системных подчёркнутых EditText.
         fun styleAllFields(v: View) {
             if (v is EditText) Ui.styleField(this, v)
             if (v is ViewGroup) for (i in 0 until v.childCount) styleAllFields(v.getChildAt(i))
