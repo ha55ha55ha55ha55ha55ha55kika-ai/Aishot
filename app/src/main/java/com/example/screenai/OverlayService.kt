@@ -822,5 +822,14 @@ class OverlayService : Service() {
         mediaProjection?.unregisterCallback(projectionCallback)
         mediaProjection?.stop()
         cameraDevice?.close()
+        // Раньше кнопка не убиралась при остановке сервиса — из-за этого при
+        // запуске новой плавающей кнопки старая оставалась висеть поверх экрана.
+        try {
+            if (::windowManager.isInitialized && ::btn.isInitialized) {
+                windowManager.removeView(btn)
+            }
+        } catch (e: Exception) {
+            // Вьюха уже могла быть удалена системой — не критично.
+        }
     }
 }
