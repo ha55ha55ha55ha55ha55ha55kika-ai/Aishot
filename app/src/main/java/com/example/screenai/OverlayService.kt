@@ -551,29 +551,12 @@ class OverlayService : Service() {
             return
         }
 
-        val task = mainHandler.run {
-            // читаем поля из UI потока (значения могут меняться — берём текущее)
-            liveTaskField?.text?.toString()?.trim() ?: ""
-        }
+        val task = liveTaskField?.text?.toString()?.trim() ?: ""
         val help = liveHelpField?.text?.toString()?.trim() ?: ""
 
-        val livePrompt = buildString {
-            append("Ты ИИ-помощник. Ты видишь экран пользователя в реальном времени.
-
-")
-            if (task.isNotEmpty()) {
-                append("ЗАДАЧА: $task
-")
-            }
-            if (help.isNotEmpty()) {
-                append("КОНТЕКСТ/ЗАТРУДНЕНИЕ: $help
-")
-            }
-            append("
-Посмотри на экран и кратко опиши что сейчас происходит. ")
-            append("Если задача задана — скажи какой следующий шаг нужно сделать или что ты видишь важного для этой задачи. ")
-            append("Отвечай чётко и по делу, 2-4 предложения максимум.")
-        }
+        val taskPart = if (task.isNotEmpty()) "\nЗАДАЧА: $task" else ""
+        val helpPart = if (help.isNotEmpty()) "\nКОНТЕКСТ/ЗАТРУДНЕНИЕ: $help" else ""
+        val livePrompt = "Ты ИИ-помощник. Ты видишь экран пользователя в реальном времени.$taskPart$helpPart\n\nПосмотри на экран и кратко опиши что сейчас происходит. Если задача задана — скажи какой следующий шаг нужно сделать или что ты видишь важного для этой задачи. Отвечай четко и по делу, 2-4 предложения максимум."
 
         mainHandler.post { liveAnswerTextView?.text = "👁 Анализирую..." }
 
