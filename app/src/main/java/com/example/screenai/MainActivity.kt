@@ -142,9 +142,10 @@ class MainActivity : Activity() {
         }
     }
 
-    // Шаг 2 из 2: запрашиваем разрешение на камеру, если оно нужно и ещё не выдано.
-    // Этот диалог НИКОГДА не вызывается изнутри колбэка предыдущего системного
-    // диалога напрямую — только после отдельного клика/события, что и чинит баг.
+    // Шаг 2 из 2 (или 3 из 3, если дальше ещё нужен микрофон): запрашиваем разрешение
+    // на камеру, если оно нужно и ещё не выдано. Этот диалог НИКОГДА не вызывается
+    // изнутри колбэка предыдущего системного диалога напрямую — только после
+    // отдельного клика/события, что и чинит баг.
     private fun requestCameraThenStart() {
         val mode = currentMode()
         val needsCamera = mode == "camera" || mode == "mix"
@@ -154,12 +155,28 @@ class MainActivity : Activity() {
             ActivityCompat.requestPermissions(this, arrayOf(android.Manifest.permission.CAMERA), 3)
             return
         }
+        requestMicThenStart()
+    }
+
+    // Последний шаг: режим "Слушатель" требует микрофон — запрашивается отдельным
+    // диалогом (та же логика разделения диалогов, что и с камерой выше).
+    private fun requestMicThenStart() {
+        val mode = currentMode()
+        val needsMic = mode == "listen"
+        if (needsMic && ContextCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            ActivityCompat.requestPermissions(this, arrayOf(android.Manifest.permission.RECORD_AUDIO), 4)
+            return
+        }
         startOverlayService(pendingResultCode, pendingData)
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == 3) {
+            requestMicThenStart()
+        } else if (requestCode == 4) {
             startOverlayService(pendingResultCode, pendingData)
         }
     }
