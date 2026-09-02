@@ -34,6 +34,12 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Проверяем ключ при каждом открытии
+        if (!KeyManager.isAccessValid(this)) {
+            startActivity(android.content.Intent(this, KeyActivity::class.java))
+            finish()
+            return
+        }
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
