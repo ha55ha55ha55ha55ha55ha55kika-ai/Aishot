@@ -63,8 +63,8 @@ class SettingsActivity : Activity() {
 
         // ---- Режим захвата ----
         layout.addView(label("Режим кнопки:"))
-        val captureModes = arrayOf("Скриншот", "Фронтальная камера", "Микс (обе кнопки)", "🔴 ИИ-камера Live")
-        val captureModeKeys = arrayOf("screenshot", "camera", "mix", "live")
+        val captureModes = arrayOf("Скриншот", "Фронтальная камера", "Микс (обе кнопки)", "🔴 ИИ-камера Live", "🎤 Слушатель (голос)")
+        val captureModeKeys = arrayOf("screenshot", "camera", "mix", "live", "listen")
         val captureModeSpinner = Spinner(this)
         captureModeSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, captureModes)
         val savedCaptureMode = prefs.getString("capture_mode", "screenshot") ?: "screenshot"
@@ -109,6 +109,69 @@ class SettingsActivity : Activity() {
             setPadding(0, dp(10), 0, dp(10))
         })
         layout.addView(liveNoteSection)
+
+        // ---- Настройки режима "Слушатель" (голос) ----
+        val listenSection = section()
+        listenSection.addView(TextView(this).apply {
+            text = "🎤 Режим «Слушатель»\n\n" +
+                "Нажатие на кружок запускает/останавливает прослушивание (видна иконка 🎤 " +
+                "пока активно — приложение никогда не слушает скрытно). Распознанный вопрос " +
+                "отправляется выбранному AI-провайдеру, ответ показывается в панели на экране " +
+                "(можно закрепить 📌, скопировать 📋 или закрыть ✕, как и в остальных режимах)."
+            textSize = 13f
+            setTextColor(Color.parseColor(Ui.TEXT_SECONDARY))
+            setPadding(0, dp(10), 0, dp(10))
+        })
+
+        val requireTriggerSwitch = Switch(this).apply {
+            text = "Требовать слово-триггер перед вопросом"
+            isChecked = prefs.getBoolean("listen_require_trigger", true)
+            setTextColor(Color.parseColor(Ui.TEXT_PRIMARY))
+        }
+        listenSection.addView(requireTriggerSwitch)
+
+        val triggerWordsLabel = label("Слова-триггеры (через запятую):")
+        listenSection.addView(triggerWordsLabel)
+        val triggerWordsField = EditText(this).apply {
+            setText(prefs.getString("listen_trigger_words", ""))
+            hint = "Например: Табаков, Паша"
+        }
+        listenSection.addView(triggerWordsField)
+        listenSection.addView(TextView(this).apply {
+            text = "Сказанное после слова-триггера (в той же фразе или в следующей) " +
+                "считается вопросом. Если триггер выключен — приложение слушает постоянно " +
+                "и само определяет, похожа ли фраза на вопрос."
+            textSize = 12f
+            setTextColor(Color.parseColor(Ui.TEXT_SECONDARY))
+            setPadding(0, dp(4), 0, dp(10))
+        })
+
+        listenSection.addView(label("Автоскрытие ответа (секунд, 0 = не скрывать):"))
+        val autoHideField = EditText(this).apply {
+            setText(prefs.getInt("listen_autohide_sec", 60).toString())
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            hint = "60"
+        }
+        listenSection.addView(autoHideField)
+
+        listenSection.addView(label("Язык распознавания речи:"))
+        val listenLanguages = arrayOf("Русский", "Українська")
+        val listenLanguageKeys = arrayOf("ru-RU", "uk-UA")
+        val listenLanguageSpinner = Spinner(this)
+        listenLanguageSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, listenLanguages)
+        val savedListenLanguage = prefs.getString("listen_language", "ru-RU") ?: "ru-RU"
+        listenLanguageSpinner.setSelection(listenLanguageKeys.indexOf(savedListenLanguage).coerceAtLeast(0))
+        listenSection.addView(listenLanguageSpinner)
+
+        fun updateTriggerWordsVisibility() {
+            val visible = requireTriggerSwitch.isChecked
+            triggerWordsLabel.visibility = if (visible) View.VISIBLE else View.GONE
+            triggerWordsField.visibility = if (visible) View.VISIBLE else View.GONE
+        }
+        requireTriggerSwitch.setOnCheckedChangeListener { _, _ -> updateTriggerWordsVisibility() }
+        updateTriggerWordsVisibility()
+
+        layout.addView(listenSection)
 
         // ---- Ключи и модели по провайдерам (каждый — своя секция) ----
 
@@ -244,6 +307,7 @@ class SettingsActivity : Activity() {
             val selected = captureModeKeys[captureModeSpinner.selectedItemPosition]
             mixSection.visibility = if (selected == "mix") View.VISIBLE else View.GONE
             liveNoteSection.visibility = if (selected == "live") View.VISIBLE else View.GONE
+            listenSection.visibility = if (selected == "listen") View.VISIBLE else View.GONE
         }
 
         providerSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
@@ -400,6 +464,10 @@ class SettingsActivity : Activity() {
                     putString("mistral_model", mistralModel.text.toString().trim().ifEmpty { "pixtral-large-latest" })
                     putString("openrouter_key", openrouterKey.text.toString().trim())
                     putString("openrouter_model", openrouterModel.text.toString().trim().ifEmpty { "anthropic/claude-3.5-sonnet" })
+                    putBoolean("listen_require_trigger", requireTriggerSwitch.isChecked)
+                    putString("listen_trigger_words", triggerWordsField.text.toString().trim())
+                    putInt("listen_autohide_sec", autoHideField.text.toString().trim().toIntOrNull()?.coerceIn(0, 600) ?: 60)
+                    putString("listen_language", listenLanguageKeys[listenLanguageSpinner.selectedItemPosition])
                     putString("prompt", promptField.text.toString().trim())
                     putString("button_label", buttonLabel.text.toString().trim().ifEmpty { "AI" })
                     putInt("button_size_dp", 40 + sizeSeekBar.progress)
