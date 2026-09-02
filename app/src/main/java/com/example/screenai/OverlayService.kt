@@ -13,9 +13,13 @@ import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Build
+import android.os.Bundle
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
 import android.util.Base64
 import android.util.DisplayMetrics
 import android.view.Gravity
@@ -84,6 +88,13 @@ class OverlayService : Service() {
             }
         }
     }
+
+    // ---- Режим "Слушатель": распознавание речи и голосовые вопросы ----
+    @Volatile private var listenMode = false
+    private var speechRecognizer: SpeechRecognizer? = null
+    // true после того как услышано слово-триггер без вопроса следом — значит
+    // следующая распознанная фраза целиком считается вопросом.
+    @Volatile private var awaitingQuestion = false
 
     private val projectionCallback = object : MediaProjection.Callback() {
         override fun onStop() {
@@ -267,6 +278,9 @@ class OverlayService : Service() {
                             "camera" -> captureFromCamera()
                             "live" -> {
                                 if (liveMode) stopLiveMode() else startLiveMode()
+                            }
+                            "listen" -> {
+                                if (listenMode) stopListenMode() else startListenMode()
                             }
                             "mix" -> {
                                 // Левая половина контейнера — скриншот, правая — камера.
@@ -599,6 +613,295 @@ class OverlayService : Service() {
 
     // Снимок с фронтальной камеры вместо экрана. Использует тот же sendToAI(bitmap),
     // так что дальнейшая отправка в ИИ не отличается от режима скриншота.
+    // ---- Режим "Слушатель" методы ----
+
+    private fun startListenMode() {
+        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+            showResult("Распознавание речи недоступно на этом устройстве")
+            return
+        }
+        listenMode = true
+        awaitingQuestion = false
+        updateListenButtonLook()
+        Toast.makeText(this, "🎤 Слушатель включён", Toast.LENGTH_SHORT).show()
+        startListeningCycle()
+    }
+
+    private fun stopListenMode() {
+        listenMode = false
+        awaitingQuestion = false
+        mainHandler.post {
+            speechRecognizer?.destroy()
+            speechRecognizer = null
+        }
+        updateListenButtonLook()
+        Toast.makeText(this, "🎤 Слушатель выключен", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun updateListenButtonLook() {
+        mainHandler.post {
+            val b = btn
+            if (b is Button) {
+                b.text = if (listenMode) "⏹🎤" else (prefs.getString("button_label", "AI") ?: "AI")
+            }
+        }
+    }
+
+    // Один цикл прослушивания: слушает одну фразу (до паузы в речи), обрабатывает
+    // её и сразу запускает следующий цикл, пока listenMode не выключен вручную.
+    // SpeechRecognizer в Android умеет слушать только одну "сессию" за раз — это
+    // штатный способ сделать из него непрерывное прослушивание.
+    private fun startListeningCycle() {
+        if (!listenMode) return
+        mainHandler.post {
+            val recognizer = SpeechRecognizer.createSpeechRecognizer(this)
+            speechRecognizer = recognizer
+            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE, prefs.getString("listen_language", "ru-RU") ?: "ru-RU")
+                putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, packageName)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1200)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1200)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 500)
+            }
+            recognizer.setRecognitionListener(object : RecognitionListener {
+                override fun onResults(results: Bundle) {
+                    val matches = results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                    val text = matches?.firstOrNull()?.trim().orEmpty()
+                    try { recognizer.destroy() } catch (e: Exception) {}
+                    speechRecognizer = null
+                    if (text.isNotEmpty()) handleRecognizedSpeech(text)
+                    if (listenMode) mainHandler.postDelayed({ startListeningCycle() }, 250)
+                }
+                override fun onError(error: Int) {
+                    try { recognizer.destroy() } catch (e: Exception) {}
+                    speechRecognizer = null
+                    // ERROR_NO_MATCH / ERROR_SPEECH_TIMEOUT — обычная ситуация (тишина),
+                    // просто слушаем дальше без задержки-паники.
+                    val delay = if (error == SpeechRecognizer.ERROR_NO_MATCH ||
+                        error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) 200L else 1000L
+                    if (listenMode) mainHandler.postDelayed({ startListeningCycle() }, delay)
+                }
+                override fun onReadyForSpeech(params: Bundle?) {}
+                override fun onBeginningOfSpeech() {}
+                override fun onRmsChanged(rmsdB: Float) {}
+                override fun onBufferReceived(buffer: ByteArray?) {}
+                override fun onEndOfSpeech() {}
+                override fun onPartialResults(partialResults: Bundle?) {}
+                override fun onEvent(eventType: Int, params: Bundle?) {}
+            })
+            try {
+                recognizer.startListening(intent)
+            } catch (e: Exception) {
+                speechRecognizer = null
+                if (listenMode) mainHandler.postDelayed({ startListeningCycle() }, 1000)
+            }
+        }
+    }
+
+    private fun handleRecognizedSpeech(text: String) {
+        val requireTrigger = prefs.getBoolean("listen_require_trigger", true)
+
+        if (!requireTrigger) {
+            // Без слова-триггера: слушает постоянно, но отвечает только на то,
+            // что похоже на вопрос — обычные разговоры игнорируются.
+            if (looksLikeQuestion(text)) askQuestion(text)
+            return
+        }
+
+        val triggerWords = (prefs.getString("listen_trigger_words", "") ?: "")
+            .split(",").map { it.trim().lowercase() }.filter { it.isNotEmpty() }
+        if (triggerWords.isEmpty()) return
+        val lower = text.lowercase()
+
+        if (awaitingQuestion) {
+            awaitingQuestion = false
+            askQuestion(text)
+            return
+        }
+
+        val hit = triggerWords.firstOrNull { lower.contains(it) } ?: return
+        val afterTrigger = lower.substringAfter(hit).trim(' ', ',', '.', '!', '?', ':', '-')
+        if (afterTrigger.length > 2) {
+            // Триггер и вопрос сказаны одной фразой: "Табаков, который час"
+            askQuestion(afterTrigger)
+        } else {
+            // Услышали только имя — ждём вопрос следующей фразой
+            awaitingQuestion = true
+            showResult("🎤 Слушаю вопрос...")
+        }
+    }
+
+    /** Простая эвристика "похоже ли это на вопрос" — по вопросительным словам в начале
+     * фразы или вопросительному знаку (иногда распознаётся движком речи). */
+    /** Простая эвристика "похоже ли это на вопрос" — по вопросительным словам (в начале
+     * фразы или где-либо в ней) или вопросительному знаку (иногда распознаётся движком
+     * речи). Поддерживает русский и украинский языки. */
+    private fun looksLikeQuestion(text: String): Boolean {
+        val lower = text.lowercase().trim()
+        if (lower.endsWith("?")) return true
+
+        // Слова, по которым фраза почти наверняка вопрос, даже если стоят не в начале
+        // ("а где ключи", "ты знаешь, сколько это стоит").
+        val questionWordsAnywhere = listOf(
+            // Русский
+            "что", "как", "почему", "отчего", "зачем", "когда", "где", "куда", "откуда",
+            "кто", "кого", "кому", "кем", "чей", "чья", "чьё", "чьи",
+            "сколько", "какой", "какая", "какое", "какие", "каков", "какова",
+            "можно ли", "нужно ли", "правда ли", "верно ли", "не так ли",
+            // Украинский
+            "що", "як", "чому", "навіщо", "коли", "де", "куди", "звідки",
+            "хто", "кого", "кому", "ким", "чий", "чия", "чиє", "чиї",
+            "скільки", "який", "яка", "яке", "які", "чи можна", "чи потрібно", "чи правда"
+        )
+        if (questionWordsAnywhere.any { lower.contains(it) }) return true
+
+        // Слово "чи" в начале фразы по-украински — как "ли" в вопросе ("чи прийдеш ти?")
+        val leadingParticles = listOf("чи ", "ли ")
+        return leadingParticles.any { lower.startsWith(it) }
+    }
+
+    private fun askQuestion(question: String) {
+        val autoHideSec = prefs.getInt("listen_autohide_sec", 60)
+        scope.launch { sendTextToAI(question, autoHideSec) }
+    }
+
+    private fun sendTextToAI(question: String, autoHideSec: Int) {
+        val provider = prefs.getString("provider", "Gemini") ?: "Gemini"
+        showResult("🎤 Вопрос: $question\n\n⏳ Спрашиваю $provider...")
+
+        val req = buildTextRequest(provider, question)
+        val client = OkHttpClient()
+        try {
+            client.newCall(req).execute().use { resp ->
+                val respBody = resp.body?.string() ?: "{}"
+                val text = try {
+                    when (provider) {
+                        "Claude" -> JSONObject(respBody).getJSONArray("content").getJSONObject(0).getString("text")
+                        "Gemini" -> JSONObject(respBody).getJSONArray("candidates").getJSONObject(0)
+                            .getJSONObject("content").getJSONArray("parts").getJSONObject(0).getString("text")
+                        else -> JSONObject(respBody).getJSONArray("choices").getJSONObject(0)
+                            .getJSONObject("message").getString("content")
+                    }
+                } catch (e: Exception) {
+                    "Ошибка ($provider): $respBody"
+                }
+                showResult("🎤 Вопрос: $question\n\n$text", autoHideSec)
+            }
+        } catch (e: Exception) {
+            showResult("Ошибка сети ($provider): ${e.message}", autoHideSec)
+        }
+    }
+
+    /** Текстовые (без картинки) запросы к провайдерам — используются режимом "Слушатель". */
+    private fun buildTextRequest(provider: String, prompt: String): Request = when (provider) {
+        "Claude" -> buildClaudeTextRequest(prompt)
+        "OpenAI" -> buildOpenAITextRequest(prompt)
+        "Grok" -> buildGrokTextRequest(prompt)
+        "DeepSeek" -> buildDeepSeekRequest(prompt)
+        "Mistral" -> buildMistralTextRequest(prompt)
+        "OpenRouter" -> buildOpenRouterTextRequest(prompt)
+        else -> buildGeminiTextRequest(prompt)
+    }
+
+    private fun buildGeminiTextRequest(prompt: String): Request {
+        val key = prefs.getString("gemini_key", "") ?: ""
+        val model = prefs.getString("gemini_model", "gemini-3.6-flash") ?: "gemini-3.6-flash"
+        val json = JSONObject().apply {
+            put("contents", JSONArray().put(JSONObject().apply {
+                put("parts", JSONArray().put(JSONObject().put("text", prompt)))
+            }))
+        }
+        val body = json.toString().toRequestBody("application/json".toMediaType())
+        return Request.Builder()
+            .url("https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$key")
+            .post(body).build()
+    }
+
+    private fun buildClaudeTextRequest(prompt: String): Request {
+        val key = prefs.getString("claude_key", "") ?: ""
+        val model = prefs.getString("claude_model", "claude-sonnet-4-5") ?: "claude-sonnet-4-5"
+        val json = JSONObject().apply {
+            put("model", model)
+            put("max_tokens", 1024)
+            put("messages", JSONArray().put(JSONObject().apply {
+                put("role", "user"); put("content", prompt)
+            }))
+        }
+        val body = json.toString().toRequestBody("application/json".toMediaType())
+        return Request.Builder()
+            .url("https://api.anthropic.com/v1/messages")
+            .addHeader("x-api-key", key)
+            .addHeader("anthropic-version", "2023-06-01")
+            .post(body).build()
+    }
+
+    private fun buildOpenAITextRequest(prompt: String): Request {
+        val key = prefs.getString("openai_key", "") ?: ""
+        val model = prefs.getString("openai_model", "gpt-4o") ?: "gpt-4o"
+        val json = JSONObject().apply {
+            put("model", model)
+            put("messages", JSONArray().put(JSONObject().apply {
+                put("role", "user"); put("content", prompt)
+            }))
+        }
+        val body = json.toString().toRequestBody("application/json".toMediaType())
+        return Request.Builder()
+            .url("https://api.openai.com/v1/chat/completions")
+            .addHeader("Authorization", "Bearer $key")
+            .post(body).build()
+    }
+
+    private fun buildGrokTextRequest(prompt: String): Request {
+        val key = prefs.getString("grok_key", "") ?: ""
+        val model = prefs.getString("grok_model", "grok-4") ?: "grok-4"
+        val json = JSONObject().apply {
+            put("model", model)
+            put("messages", JSONArray().put(JSONObject().apply {
+                put("role", "user"); put("content", prompt)
+            }))
+        }
+        val body = json.toString().toRequestBody("application/json".toMediaType())
+        return Request.Builder()
+            .url("https://api.x.ai/v1/chat/completions")
+            .addHeader("Authorization", "Bearer $key")
+            .post(body).build()
+    }
+
+    private fun buildMistralTextRequest(prompt: String): Request {
+        val key = prefs.getString("mistral_key", "") ?: ""
+        val model = prefs.getString("mistral_model", "pixtral-large-latest") ?: "pixtral-large-latest"
+        val json = JSONObject().apply {
+            put("model", model)
+            put("messages", JSONArray().put(JSONObject().apply {
+                put("role", "user"); put("content", prompt)
+            }))
+        }
+        val body = json.toString().toRequestBody("application/json".toMediaType())
+        return Request.Builder()
+            .url("https://api.mistral.ai/v1/chat/completions")
+            .addHeader("Authorization", "Bearer $key")
+            .post(body).build()
+    }
+
+    private fun buildOpenRouterTextRequest(prompt: String): Request {
+        val key = prefs.getString("openrouter_key", "") ?: ""
+        val model = prefs.getString("openrouter_model", "anthropic/claude-3.5-sonnet") ?: "anthropic/claude-3.5-sonnet"
+        val json = JSONObject().apply {
+            put("model", model)
+            put("messages", JSONArray().put(JSONObject().apply {
+                put("role", "user"); put("content", prompt)
+            }))
+        }
+        val body = json.toString().toRequestBody("application/json".toMediaType())
+        return Request.Builder()
+            .url("https://openrouter.ai/api/v1/chat/completions")
+            .addHeader("Authorization", "Bearer $key")
+            .addHeader("HTTP-Referer", "https://github.com/")
+            .addHeader("X-Title", "ScreenAI")
+            .post(body).build()
+    }
+
     private fun captureFromCamera() {
         if (androidx.core.content.ContextCompat.checkSelfPermission(
                 this, android.Manifest.permission.CAMERA
@@ -902,7 +1205,7 @@ class OverlayService : Service() {
 
     // ---- Панель с ответом ИИ (вместо Toast, который сам исчезал через пару секунд) ----
 
-    private fun showResult(text: String) {
+    private fun showResult(text: String, autoHideSec: Int = 0) {
         mainHandler.post {
             val liveTextView = activePanelTextView
             if (liveTextView != null && !activePanelPinned) {
@@ -911,6 +1214,22 @@ class OverlayService : Service() {
             } else {
                 // Либо карточки ещё нет, либо она закреплена — создаём новую поверх
                 createResultPanel(text)
+            }
+            // Автоскрытие (используется режимом "Слушатель"): если за это время
+            // пользователь не закрепил и не закрыл карточку сам — просто убираем её.
+            if (autoHideSec > 0) {
+                val panelToHide = activePanelView
+                mainHandler.postDelayed({
+                    if (activePanelView == panelToHide && !activePanelPinned) {
+                        try {
+                            panelToHide?.let { windowManager.removeView(it) }
+                        } catch (e: Exception) {
+                            // Могла быть уже удалена (например, пользователь нажал ✕)
+                        }
+                        activePanelView = null
+                        activePanelTextView = null
+                    }
+                }, autoHideSec * 1000L)
             }
         }
     }
@@ -1096,6 +1415,7 @@ class OverlayService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         stopLiveMode()
+        stopListenMode()
         virtualDisplay?.release()
         mediaProjection?.unregisterCallback(projectionCallback)
         mediaProjection?.stop()
