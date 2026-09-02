@@ -128,7 +128,7 @@ class MainActivity : Activity() {
     // переходим к шагу 2.
     private fun proceedAfterOverlay() {
         val mode = currentMode()
-        val needsScreenshot = mode == "screenshot" || mode == "mix"
+        val needsScreenshot = mode == "screenshot" || mode == "mix" || mode == "live"
         if (needsScreenshot) {
             startActivityForResult(projectionManager.createScreenCaptureIntent(), 2)
         } else {
